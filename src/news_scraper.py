@@ -5,7 +5,15 @@ Fetches trending news articles from NewsAPI (API key required)
 
 import requests
 from typing import List, Dict, Optional
+import sys
+from pathlib import Path
+# ...existing code...
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.append(str(ROOT_DIR))
+
 import config
+# ...existing code...
 
 
 class NewsScraper:

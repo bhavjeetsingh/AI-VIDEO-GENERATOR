@@ -106,7 +106,7 @@ class VideoCreator:
             text_color = (255, 255, 255, alpha)
             draw.text((centered_x, y), line, font=font, fill=text_color)
         
-        img.save(output_path, 'PNG')
+        img.save(output_path)
     
     def create_title_frames(self, title: str) -> List[str]:
         """Create animated title frames"""

@@ -2,12 +2,17 @@
 AI Video Generator - Main Application
 Orchestrates the news-to-video pipeline with both Pillow and Gemini support
 """
-# Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
 
-import sys
+# ===== CRITICAL: Load .env FIRST before anything else =====
 import os
+import sys
+from dotenv import load_dotenv
+
+# Load .env file from project root
+load_dotenv()
+print("✓ Environment variables loaded")
+
+# ===== NOW import other modules =====
 from datetime import datetime
 
 # Add src directory to path
@@ -28,22 +33,43 @@ class AIVideoGenerator:
         self.use_gemini = False
         
         if use_gemini:
-            try:
-                from gemini_video_generator import GeminiVideoGenerator
-                self.gemini_video = GeminiVideoGenerator()
-                self.use_gemini = True
-                print("✓ Gemini Video Generation enabled")
-            except ImportError as e:
-                print(f"⚠ Gemini module not found: {e}")
-                print("  Make sure gemini_video_generator.py exists in src/")
-                self.use_gemini = False
-            except ValueError as e:
-                print(f"⚠ Gemini API key missing: {e}")
-                print("  Add GOOGLE_API_KEY to your .env file")
-                self.use_gemini = False
-            except Exception as e:
-                print(f"⚠ Gemini initialization error: {e}")
-                self.use_gemini = False
+            self._init_gemini()
+
+    def _init_gemini(self) -> bool:
+        """Lazily initialize Gemini so menu options can enable it on demand."""
+        if self.gemini_video:
+            return True
+        try:
+            import importlib
+            gemini_mod = importlib.import_module('gemini_video_generator')
+
+            # Some environments cache an old module without the class; reload defensively
+            if not hasattr(gemini_mod, 'GeminiVideoGenerator'):
+                gemini_mod = importlib.reload(gemini_mod)
+
+            GeminiVideoGenerator = getattr(gemini_mod, 'GeminiVideoGenerator', None)
+            if not GeminiVideoGenerator:
+                raise ImportError("GeminiVideoGenerator class not found in gemini_video_generator")
+
+            # Debug info to help when imports get shadowed
+            print(f"Gemini module path: {getattr(gemini_mod, '__file__', 'unknown')}")
+            print(f"GeminiVideoGenerator resolved: {GeminiVideoGenerator}")
+
+            self.gemini_video = GeminiVideoGenerator()
+            self.use_gemini = True
+            print("✓ Gemini Video Generation enabled")
+            return True
+        except ImportError as e:
+            print(f"⚠ Gemini module not found: {e}")
+            print("  Make sure gemini_video_generator.py exists in src/")
+        except ValueError as e:
+            print(f"⚠ Gemini API key missing: {e}")
+            print("  Add GEMINI_API_KEY to your .env file")
+        except Exception as e:
+            print(f"⚠ Gemini initialization error: {e}")
+        self.use_gemini = False
+        self.gemini_video = None
+        return False
     
     def generate_video_from_article(self, article_index: int = 0, category: str = None, use_gemini: bool = None):
         """Generate a video from a specific news article"""
@@ -101,21 +127,18 @@ class AIVideoGenerator:
         video_filename = f"video_{timestamp}.mp4"
         
         try:
-            if use_gemini_now:
-                if not self.gemini_video:
-                    print("Error: Gemini not initialized. Falling back to Pillow mode...")
-                    video_path = self.video_creator.create_video(
-                        article,
-                        script,
-                        video_filename
-                    )
-                else:
-                    print("🎬 Using Google Gemini for video generation...")
-                    video_path = self.gemini_video.generate_video_from_script(
-                        script,
-                        output_path=os.path.join(config.OUTPUT_VIDEO_DIR, video_filename)
-                    )
+            if use_gemini_now and not self.gemini_video:
+                use_gemini_now = self._init_gemini()
+
+            if use_gemini_now and self.gemini_video:
+                print("🎬 Using Google Gemini for video generation...")
+                video_path = self.gemini_video.generate_video_from_script(
+                    script,
+                    output_path=os.path.join(config.OUTPUT_VIDEO_DIR, video_filename)
+                )
             else:
+                if use_gemini_now:
+                    print("Error: Gemini not initialized. Falling back to Pillow mode...")
                 print("🎬 Using Pillow + MoviePy for video generation...")
                 video_path = self.video_creator.create_video(
                     article,

@@ -11,26 +11,95 @@ import os
 
 class ScriptGenerator:
     def __init__(self):
-        self.ai_provider = config.AI_PROVIDER
-        
+        self.ai_provider = (config.AI_PROVIDER or '').lower()
+        self.client = None
+        self._gemini_models = self._discover_gemini_models()
+
         if self.ai_provider == 'openai':
-            try:
-                from openai import OpenAI
-                self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-            except Exception as e:
-                print(f"Error initializing OpenAI: {e}")
-                self.client = None
+            self._init_openai_client()
+            if not self.client and config.GEMINI_API_KEY:
+                # Gracefully fall back to Gemini if OpenAI initialization fails
+                print("OpenAI unavailable, falling back to Gemini")
+                self.ai_provider = 'gemini'
+                self._init_gemini_client()
         elif self.ai_provider == 'gemini':
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=config.GEMINI_API_KEY)
-                self.client = genai.GenerativeModel('gemini-pro')
-            except Exception as e:
-                print(f"Error initializing Gemini: {e}")
-                self.client = None
+            self._init_gemini_client()
         else:
             self.client = None
             print("Invalid AI provider specified")
+
+    def _init_openai_client(self):
+        """Initialize OpenAI client, handling common proxy/version issues."""
+        if not config.OPENAI_API_KEY:
+            print("OpenAI API key missing; skipping OpenAI initialization")
+            return
+        try:
+            from openai import OpenAI
+            self.client = OpenAI(api_key=config.OPENAI_API_KEY)
+        except TypeError as e:
+            # Some older OpenAI client versions do not accept proxy arguments
+            if 'proxies' in str(e):
+                print("OpenAI client error: installed version does not support proxy arguments. "
+                      "Upgrade 'openai' to >=1.0 or remove OPENAI_PROXY/HTTPS_PROXY settings.")
+            else:
+                print(f"Error initializing OpenAI: {e}")
+            self.client = None
+        except Exception as e:
+            print(f"Error initializing OpenAI: {e}")
+            self.client = None
+
+    def _init_gemini_client(self):
+        """Initialize Gemini client if a key is present."""
+        if not config.GEMINI_API_KEY:
+            print("Gemini API key missing; skipping Gemini initialization")
+            return
+        try:
+            import google.generativeai as genai
+            # Use default API settings; model name must be available to your account
+            genai.configure(api_key=config.GEMINI_API_KEY)
+            self.client = self._first_available_gemini_model(genai)
+        except Exception as e:
+            print(f"Error initializing Gemini: {e}")
+            self.client = None
+
+    def _discover_gemini_models(self) -> List[str]:
+        """Attempt to fetch available Gemini models and merge with fallbacks."""
+        preferred = [
+            'gemini-1.5-pro',
+            'gemini-1.5-flash',
+            'gemini-pro-vision',
+            'gemini-1.0-pro-latest',
+            'gemini-1.0-pro',
+            'gemini-1.5-flash-latest',
+            'gemini-pro',
+            'models/gemini-1.5-pro',
+            'models/gemini-1.5-flash',
+            'models/gemini-pro',
+        ]
+
+        names: List[str] = []
+        try:
+            import google.generativeai as genai
+            models = genai.list_models()
+            for m in models:
+                methods = getattr(m, 'supported_generation_methods', []) or []
+                if 'generateContent' in methods or 'generate_content' in methods:
+                    names.append(m.name)
+        except Exception as e:
+            print(f"Warning: Unable to list Gemini models automatically: {e}")
+
+        # Merge discovered with preferred fallbacks
+        return names + [m for m in preferred if m not in names]
+
+    def _first_available_gemini_model(self, genai):
+        """Pick the first Gemini model that can be constructed."""
+        for name in self._gemini_models:
+            try:
+                return genai.GenerativeModel(name)
+            except Exception:
+                continue
+        print("No Gemini models available from the configured account")
+        return None
     
     def generate_script_openai(self, article: Dict) -> Dict:
         """Generate script using OpenAI GPT"""
@@ -110,28 +179,42 @@ Format the response as JSON with this structure:
 }}
 """
         
-        try:
-            response = self.client.generate_content(prompt)
-            script_text = response.text.strip()
-            
-            # Try to parse JSON response
-            try:
-                # Remove markdown code blocks if present
-                if script_text.startswith("```"):
-                    script_text = script_text.split("```")[1]
-                    if script_text.startswith("json"):
-                        script_text = script_text[4:]
-                script_text = script_text.strip()
-                
-                script_data = json.loads(script_text)
-                return script_data
-            except json.JSONDecodeError:
-                # Fallback: create manual structure
-                return self._fallback_script(article)
-                
-        except Exception as e:
-            print(f"Error generating script with Gemini: {e}")
+        if not self.client:
+            print("Gemini client not initialized; using fallback script")
             return self._fallback_script(article)
+
+        # Try each configured model until one works
+        try_models = [getattr(self.client, 'model_name', None)] + self._gemini_models
+        seen = set()
+
+        for model_name in filter(None, try_models):
+            if model_name in seen:
+                continue
+            seen.add(model_name)
+            try:
+                import google.generativeai as genai
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                script_text = response.text.strip()
+
+                # Try to parse JSON response
+                try:
+                    if script_text.startswith("```"):
+                        script_text = script_text.split("```")[1]
+                        if script_text.startswith("json"):
+                            script_text = script_text[4:]
+                    script_text = script_text.strip()
+                    script_data = json.loads(script_text)
+                    self.client = model
+                    return script_data
+                except json.JSONDecodeError:
+                    return self._fallback_script(article)
+            except Exception as e:
+                print(f"Gemini model '{model_name}' failed: {e}")
+                continue
+
+        print("All Gemini models failed; using fallback script")
+        return self._fallback_script(article)
     
     def _fallback_script(self, article: Dict) -> Dict:
         """Create a simple fallback script structure"""

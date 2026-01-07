@@ -18,6 +18,9 @@ class VideoCreator:
         
         self.frames_dir = os.path.join(config.ASSETS_DIR, 'frames')
         self.frame_counter = 0
+
+        # Make sure the base assets directory exists before any cleanup
+        os.makedirs(config.ASSETS_DIR, exist_ok=True)
         
         # Clean old frames
         if os.path.exists(self.frames_dir):
@@ -26,11 +29,16 @@ class VideoCreator:
                     os.remove(os.path.join(self.frames_dir, f))
                 except:
                     pass
-        
+
+        self.ensure_frames_dir()
+
+    def ensure_frames_dir(self):
+        """Ensure the frames directory exists before writing files."""
         os.makedirs(self.frames_dir, exist_ok=True)
     
     def get_next_frame_path(self):
         """Get next frame path"""
+        self.ensure_frames_dir()
         path = os.path.join(self.frames_dir, f'{self.frame_counter:06d}.png')
         self.frame_counter += 1
         return path
@@ -55,6 +63,7 @@ class VideoCreator:
     def create_frame_with_text(self, output_path: str, text: str, font_size: int = 48, 
                               bg_color: tuple = (30, 30, 50), text_opacity: float = 1.0):
         """Create frame with text using Pillow"""
+        self.ensure_frames_dir()
         # Create image
         img = Image.new('RGB', (self.width, self.height), bg_color)
         draw = ImageDraw.Draw(img, 'RGBA')

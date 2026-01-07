@@ -11,10 +11,10 @@ class GeminiVideoGenerator:
     def __init__(self, api_key: str = None):
         """Initialize Gemini Video Generator"""
         if not api_key:
-            api_key = os.getenv('GOOGLE_API_KEY')
+            api_key = os.getenv('GEMINI_API_KEY')
         
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY not found. Set it in .env or pass it directly")
+            raise ValueError("GEMINI_API_KEY not found. Set it in .env or pass it directly")
         
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.0-flash-exp')

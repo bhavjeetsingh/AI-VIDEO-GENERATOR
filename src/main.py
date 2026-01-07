@@ -15,29 +15,31 @@ from script_generator import ScriptGenerator
 from video_creator import VideoCreator
 import config
 
-# Optional: Gemini video generation
-try:
-    from gemini_video_generator import GeminiVideoGenerator
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    print("⚠ Gemini not available. Install with: pip install google-generativeai")
-
 
 class AIVideoGenerator:
     def __init__(self, use_gemini: bool = False):
         self.news_scraper = NewsScraper()
         self.script_generator = ScriptGenerator()
         self.video_creator = VideoCreator()
-        self.use_gemini = use_gemini and GEMINI_AVAILABLE
+        self.gemini_video = None  # Initialize as None
+        self.use_gemini = False
         
-        if self.use_gemini:
+        if use_gemini:
             try:
+                from gemini_video_generator import GeminiVideoGenerator
                 self.gemini_video = GeminiVideoGenerator()
+                self.use_gemini = True
                 print("✓ Gemini Video Generation enabled")
+            except ImportError as e:
+                print(f"⚠ Gemini module not found: {e}")
+                print("  Make sure gemini_video_generator.py exists in src/")
+                self.use_gemini = False
+            except ValueError as e:
+                print(f"⚠ Gemini API key missing: {e}")
+                print("  Add GOOGLE_API_KEY to your .env file")
+                self.use_gemini = False
             except Exception as e:
-                print(f"⚠ Gemini initialization failed: {e}")
-                self.gemini_video = None
+                print(f"⚠ Gemini initialization error: {e}")
                 self.use_gemini = False
     
     def generate_video_from_article(self, article_index: int = 0, category: str = None, use_gemini: bool = None):
@@ -96,12 +98,20 @@ class AIVideoGenerator:
         video_filename = f"video_{timestamp}.mp4"
         
         try:
-            if use_gemini_now and self.gemini_video:
-                print("🎬 Using Google Gemini for video generation...")
-                video_path = self.gemini_video.generate_video_from_script(
-                    script,
-                    output_path=os.path.join(config.OUTPUT_VIDEO_DIR, video_filename)
-                )
+            if use_gemini_now:
+                if not self.gemini_video:
+                    print("Error: Gemini not initialized. Falling back to Pillow mode...")
+                    video_path = self.video_creator.create_video(
+                        article,
+                        script,
+                        video_filename
+                    )
+                else:
+                    print("🎬 Using Google Gemini for video generation...")
+                    video_path = self.gemini_video.generate_video_from_script(
+                        script,
+                        output_path=os.path.join(config.OUTPUT_VIDEO_DIR, video_filename)
+                    )
             else:
                 print("🎬 Using Pillow + MoviePy for video generation...")
                 video_path = self.video_creator.create_video(
@@ -187,15 +197,11 @@ class AIVideoGenerator:
         print("  - No external API required")
         print("  - Best for: Quick generation, batch processing")
         
-        if GEMINI_AVAILABLE:
-            print("\n✓ Google Gemini Mode (PREMIUM)")
-            print("  - AI-generated videos")
-            print("  - Photorealistic quality")
-            print("  - Requires Google API key")
-            print("  - Best for: High-quality, realistic videos")
-        else:
-            print("\n✗ Google Gemini Mode (NOT INSTALLED)")
-            print("  Install: pip install google-generativeai")
+        print("\n✓ Google Gemini Mode (PREMIUM)")
+        print("  - AI-generated videos")
+        print("  - Photorealistic quality")
+        print("  - Requires Google API key")
+        print("  - Best for: High-quality, realistic videos")
         
         print("\n" + "=" * 60)
 
@@ -238,10 +244,7 @@ def main():
                 input("\nPress Enter to continue...")
                 
             elif choice == '2':
-                if GEMINI_AVAILABLE:
-                    generator.generate_video_from_article(article_index=0, use_gemini=True)
-                else:
-                    print("Gemini not available. Install with: pip install google-generativeai")
+                generator.generate_video_from_article(article_index=0, use_gemini=True)
                 input("\nPress Enter to continue...")
                 
             elif choice == '3':
@@ -254,15 +257,12 @@ def main():
                 input("\nPress Enter to continue...")
                 
             elif choice == '4':
-                if GEMINI_AVAILABLE:
-                    try:
-                        count = int(input("How many videos to generate? (1-3): ").strip())
-                        count = min(max(1, count), 3)
-                        generator.generate_multiple_videos(count=count, use_gemini=True)
-                    except ValueError:
-                        print("Invalid input. Please enter a number.")
-                else:
-                    print("Gemini not available. Install with: pip install google-generativeai")
+                try:
+                    count = int(input("How many videos to generate? (1-3): ").strip())
+                    count = min(max(1, count), 3)
+                    generator.generate_multiple_videos(count=count, use_gemini=True)
+                except ValueError:
+                    print("Invalid input. Please enter a number.")
                 input("\nPress Enter to continue...")
                 
             elif choice == '5':

@@ -2,6 +2,9 @@
 AI Video Generator - Main Application
 Orchestrates the news-to-video pipeline with both Pillow and Gemini support
 """
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 import sys
 import os

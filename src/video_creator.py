@@ -1,17 +1,12 @@
 """
-Video Creator Module
-Creates videos with text overlays and images using MoviePy
+Video Creator - Fast Frame Generation with Pillow
+Creates high-quality videos with professional text overlays
 """
-
-from moviepy.editor import (
-    TextClip, ImageClip, CompositeVideoClip, 
-    concatenate_videoclips, ColorClip
-)
+from moviepy.editor import ImageSequenceClip
 from PIL import Image, ImageDraw, ImageFont
 import os
 from typing import List, Dict
 import config
-
 
 class VideoCreator:
     def __init__(self):
@@ -19,200 +14,289 @@ class VideoCreator:
         self.height = config.VIDEO_HEIGHT
         self.fps = config.VIDEO_FPS
         self.text_duration = config.TEXT_DISPLAY_TIME
+        self.frames_per_segment = int(self.text_duration * self.fps)
         
-    def create_background(self, color=(30, 30, 50)) -> str:
-        """Create a gradient background image"""
-        # Create gradient background
-        img = Image.new('RGB', (self.width, self.height), color)
-        draw = ImageDraw.Draw(img)
+        self.frames_dir = os.path.join(config.ASSETS_DIR, 'frames')
+        self.frame_counter = 0
         
-        # Add gradient effect
-        for i in range(self.height):
-            alpha = i / self.height
-            r = int(color[0] * (1 - alpha * 0.3))
-            g = int(color[1] * (1 - alpha * 0.3))
-            b = int(color[2] + (100 * alpha * 0.5))
-            draw.line([(0, i), (self.width, i)], fill=(r, g, b))
+        # Clean old frames
+        if os.path.exists(self.frames_dir):
+            for f in os.listdir(self.frames_dir):
+                try:
+                    os.remove(os.path.join(self.frames_dir, f))
+                except:
+                    pass
         
-        # Save temporary background
-        os.makedirs(config.ASSETS_DIR, exist_ok=True)
-        bg_path = os.path.join(config.ASSETS_DIR, 'temp_background.png')
-        img.save(bg_path)
-        
-        return bg_path
+        os.makedirs(self.frames_dir, exist_ok=True)
     
-    def create_text_clip(self, text: str, duration: float, position='center') -> TextClip:
-        """Create a text clip with styling"""
-        try:
-            # Try to create text clip with specified font
-            text_clip = TextClip(
-                text,
-                fontsize=config.FONT_SIZE,
-                color=config.FONT_COLOR,
-                font='Arial-Bold',
-                size=(self.width - 100, None),
-                method='caption',
-                align='center'
-            ).set_duration(duration).set_position(position)
+    def get_next_frame_path(self):
+        """Get next frame path"""
+        path = os.path.join(self.frames_dir, f'{self.frame_counter:06d}.png')
+        self.frame_counter += 1
+        return path
+    
+    def get_font(self, size: int):
+        """Get available font with fallback"""
+        font_paths = [
+            "C:\\Windows\\Fonts\\arial.ttf",  # Windows
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
+            "/Library/Fonts/Arial.ttf",  # macOS
+        ]
+        
+        for font_path in font_paths:
+            if os.path.exists(font_path):
+                try:
+                    return ImageFont.truetype(font_path, size)
+                except:
+                    pass
+        
+        return ImageFont.load_default()
+    
+    def create_frame_with_text(self, output_path: str, text: str, font_size: int = 48, 
+                              bg_color: tuple = (30, 30, 50), text_opacity: float = 1.0):
+        """Create frame with text using Pillow"""
+        # Create image
+        img = Image.new('RGB', (self.width, self.height), bg_color)
+        draw = ImageDraw.Draw(img, 'RGBA')
+        
+        font = self.get_font(font_size)
+        
+        # Word wrap text
+        words = text.split()
+        lines = []
+        current_line = []
+        max_width = self.width - 100
+        
+        for word in words:
+            current_line.append(word)
+            line_text = " ".join(current_line)
+            bbox = draw.textbbox((0, 0), line_text, font=font)
+            line_width = bbox[2] - bbox[0]
             
-            return text_clip
-        except Exception as e:
-            print(f"Error creating text clip with custom font: {e}")
-            # Fallback to default font
-            text_clip = TextClip(
-                text,
-                fontsize=config.FONT_SIZE,
-                color=config.FONT_COLOR,
-                size=(self.width - 100, None),
-                method='caption',
-                align='center'
-            ).set_duration(duration).set_position(position)
+            if line_width > max_width and len(current_line) > 1:
+                current_line.pop()
+                lines.append(" ".join(current_line))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(" ".join(current_line))
+        
+        # Calculate y position
+        line_height = int(font_size * 1.3)
+        total_height = len(lines) * line_height
+        start_y = (self.height - total_height) // 2
+        
+        # Draw text with shadow
+        alpha = int(255 * text_opacity)
+        
+        for i, line in enumerate(lines):
+            y = start_y + i * line_height
+            x = self.width // 2
             
-            return text_clip
+            # Get text bbox for centering
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+            centered_x = x - text_width // 2
+            
+            # Draw shadow (dark, offset)
+            shadow_color = (0, 0, 0, int(alpha * 0.7))
+            draw.text((centered_x + 3, y + 3), line, font=font, fill=shadow_color)
+            
+            # Draw main text (white)
+            text_color = (255, 255, 255, alpha)
+            draw.text((centered_x, y), line, font=font, fill=text_color)
+        
+        img.save(output_path, 'PNG')
     
-    def create_title_clip(self, title: str, duration: float = 3) -> CompositeVideoClip:
-        """Create an opening title clip"""
-        # Background
-        bg_path = self.create_background(color=(20, 20, 40))
-        background = ImageClip(bg_path).set_duration(duration)
+    def create_title_frames(self, title: str) -> List[str]:
+        """Create animated title frames"""
+        frame_paths = []
+        num_frames = int(3 * self.fps)
         
-        # Title text
-        title_text = self.create_text_clip(title, duration, position='center')
+        print(f"  Creating {num_frames} title frames...")
         
-        # Subtitle
-        subtitle = self.create_text_clip(
-            "Trending News", 
-            duration, 
-            position=('center', self.height - 100)
-        ).set_duration(duration)
-        
-        # Composite
-        video = CompositeVideoClip([background, title_text, subtitle])
-        return video
-    
-    def create_segment_clip(self, text: str, duration: float, bg_path: str = None) -> CompositeVideoClip:
-        """Create a video segment with text overlay"""
-        if bg_path and os.path.exists(bg_path):
-            background = ImageClip(bg_path).set_duration(duration).resize((self.width, self.height))
-        else:
-            bg_temp = self.create_background()
-            background = ImageClip(bg_temp).set_duration(duration)
-        
-        # Text overlay
-        text_clip = self.create_text_clip(text, duration, position='center')
-        
-        # Add fade effects
-        text_clip = text_clip.crossfadein(0.5).crossfadeout(0.5)
-        
-        video = CompositeVideoClip([background, text_clip])
-        return video
-    
-    def create_video_from_script(
-        self, 
-        script_segments: List[str], 
-        title: str,
-        output_filename: str,
-        background_image: str = None
-    ) -> str:
-        """Create a complete video from script segments"""
-        print(f"Creating video with {len(script_segments)} segments...")
-        
-        clips = []
-        
-        # Create title clip
-        title_clip = self.create_title_clip(title, duration=3)
-        clips.append(title_clip)
-        
-        # Create segment clips
-        for i, segment in enumerate(script_segments):
-            if not segment.strip():
-                continue
-                
-            print(f"Processing segment {i+1}/{len(script_segments)}: {segment[:50]}...")
-            segment_clip = self.create_segment_clip(
-                segment, 
-                self.text_duration,
-                bg_path=background_image
+        for frame_num in range(num_frames):
+            frame_path = self.get_next_frame_path()
+            
+            # Fade in effect
+            progress = frame_num / num_frames
+            opacity = min(1.0, progress * 3)
+            
+            self.create_frame_with_text(
+                frame_path, 
+                title, 
+                font_size=72, 
+                bg_color=(20, 20, 40),
+                text_opacity=opacity
             )
-            clips.append(segment_clip)
+            
+            frame_paths.append(frame_path)
         
-        # Concatenate all clips
-        print("Concatenating clips...")
-        final_video = concatenate_videoclips(clips, method="compose")
+        return frame_paths
+    
+    def create_segment_frames(self, text: str, bg_image: str = None) -> List[str]:
+        """Create segment frames with fade in/out"""
+        frame_paths = []
         
-        # Ensure output directory exists
-        os.makedirs(config.OUTPUT_VIDEO_DIR, exist_ok=True)
-        output_path = os.path.join(config.OUTPUT_VIDEO_DIR, output_filename)
+        for frame_num in range(self.frames_per_segment):
+            frame_path = self.get_next_frame_path()
+            
+            # Handle background image
+            if bg_image and os.path.exists(bg_image):
+                try:
+                    bg = Image.open(bg_image).convert('RGB')
+                    bg.thumbnail((self.width, self.height), Image.Resampling.LANCZOS)
+                    
+                    if bg.size != (self.width, self.height):
+                        # Pad to correct size
+                        bg_new = Image.new('RGB', (self.width, self.height), (30, 30, 50))
+                        x_offset = (self.width - bg.width) // 2
+                        y_offset = (self.height - bg.height) // 2
+                        bg_new.paste(bg, (x_offset, y_offset))
+                        bg = bg_new
+                    
+                    bg.save(frame_path, 'PNG')
+                    
+                    # Add overlay
+                    overlay = Image.new('RGBA', (self.width, self.height), (0, 0, 0, 128))
+                    bg_rgba = Image.open(frame_path).convert('RGBA')
+                    bg_rgba = Image.alpha_composite(bg_rgba, overlay)
+                    bg_rgba.convert('RGB').save(frame_path, 'PNG')
+                except:
+                    self.create_frame_with_text(frame_path, text, font_size=48)
+                    continue
+            else:
+                self.create_frame_with_text(frame_path, text, font_size=48)
+                continue
+            
+            # Add text to the frame
+            frame_img = Image.open(frame_path).convert('RGBA')
+            draw = ImageDraw.Draw(frame_img)
+            
+            # Fade in/out
+            progress = frame_num / self.frames_per_segment
+            if progress < 0.2:
+                opacity = progress / 0.2
+            elif progress > 0.8:
+                opacity = (1 - progress) / 0.2
+            else:
+                opacity = 1.0
+            
+            # Word wrap
+            words = text.split()
+            lines = []
+            current_line = []
+            font = self.get_font(48)
+            max_width = self.width - 100
+            
+            for word in words:
+                current_line.append(word)
+                line_text = " ".join(current_line)
+                bbox = draw.textbbox((0, 0), line_text, font=font)
+                if (bbox[2] - bbox[0]) > max_width and len(current_line) > 1:
+                    current_line.pop()
+                    lines.append(" ".join(current_line))
+                    current_line = [word]
+            if current_line:
+                lines.append(" ".join(current_line))
+            
+            # Draw text
+            line_height = int(48 * 1.3)
+            total_height = len(lines) * line_height
+            start_y = (self.height - total_height) // 2
+            
+            alpha = int(255 * opacity)
+            
+            for i, line in enumerate(lines):
+                y = start_y + i * line_height
+                x = self.width // 2
+                
+                bbox = draw.textbbox((0, 0), line, font=font)
+                text_width = bbox[2] - bbox[0]
+                centered_x = x - text_width // 2
+                
+                # Shadow
+                draw.text((centered_x + 3, y + 3), line, font=font, fill=(0, 0, 0, int(alpha * 0.7)))
+                # Text
+                draw.text((centered_x, y), line, font=font, fill=(255, 255, 255, alpha))
+            
+            frame_img.save(frame_path, 'PNG')
+            frame_paths.append(frame_path)
         
-        # Export video
-        print(f"Exporting video to {output_path}...")
-        final_video.write_videofile(
-            output_path,
-            fps=self.fps,
-            codec='libx264',
-            audio=False,
-            preset='medium',
-            threads=4
-        )
+        return frame_paths
+    
+    def create_video_from_frames(self, output_filename: str) -> str:
+        """Convert frames to video using MoviePy"""
+        frame_files = sorted([f for f in os.listdir(self.frames_dir) if f.endswith('.png')])
+        frame_paths = [os.path.join(self.frames_dir, f) for f in frame_files]
         
-        # Cleanup
-        final_video.close()
-        for clip in clips:
+        if not frame_paths:
+            print("ERROR: No frames generated!")
+            return None
+        
+        print(f"Converting {len(frame_paths)} frames to video (this takes a minute)...")
+        
+        try:
+            clip = ImageSequenceClip(frame_paths, fps=self.fps)
+            
+            os.makedirs(config.OUTPUT_VIDEO_DIR, exist_ok=True)
+            output_path = os.path.join(config.OUTPUT_VIDEO_DIR, output_filename)
+            
+            clip.write_videofile(
+                output_path,
+                fps=self.fps,
+                codec='libx264',
+                audio=False,
+                preset='fast',
+                bitrate='5000k',
+                verbose=False,
+                logger=None
+            )
+            
             clip.close()
+            
+            # Cleanup
+            for fp in frame_paths:
+                try:
+                    os.remove(fp)
+                except:
+                    pass
+            
+            print(f"✓ Video saved: {output_path}")
+            return output_path
         
-        print(f"Video created successfully: {output_path}")
-        return output_path
+        except Exception as e:
+            print(f"Error: {e}")
+            return None
     
-    def create_video(
-        self, 
-        article: Dict, 
-        script: Dict, 
-        output_filename: str = None
-    ) -> str:
-        """Create video from article and script"""
+    def create_video(self, article: Dict, script: Dict, output_filename: str = None) -> str:
+        """Create video"""
         if not output_filename:
-            # Generate filename from article title
             safe_title = "".join(c for c in article['title'][:30] if c.isalnum() or c in (' ', '-', '_'))
-            safe_title = safe_title.replace(' ', '_')
-            output_filename = f"{safe_title}.mp4"
+            output_filename = f"{safe_title.replace(' ', '_')}.mp4"
         
-        # Get script segments
-        segments = []
-        segments.append(script.get('hook', ''))
-        segments.extend(script.get('segments', []))
-        segments.append(script.get('conclusion', ''))
+        print(f"\n🎬 Creating: {article['title']}")
         
-        # Filter empty segments
-        segments = [s for s in segments if s.strip()]
+        self.frame_counter = 0
         
-        # Create video
-        return self.create_video_from_script(
-            segments,
-            article['title'],
-            output_filename,
-            background_image=article.get('image_url')
-        )
-
-
-if __name__ == "__main__":
-    # Test video creator
-    test_article = {
-        'title': 'AI Technology News',
-        'description': 'Breaking developments in artificial intelligence',
-        'source': 'Tech News',
-        'url': 'https://example.com',
-        'image_url': ''
-    }
-    
-    test_script = {
-        'hook': 'Big news in AI technology!',
-        'segments': [
-            'Revolutionary changes are coming',
-            'This will transform everything',
-            'What does it mean for you?'
-        ],
-        'conclusion': 'Stay tuned for updates!'
-    }
-    
-    creator = VideoCreator()
-    creator.create_video(test_article, test_script, "test_video.mp4")
+        # Title
+        print("📝 Creating title...")
+        self.create_title_frames(article['title'])
+        
+        # Segments
+        segments = [s for s in [
+            script.get('hook', ''),
+            *script.get('segments', []),
+            script.get('conclusion', '')
+        ] if s.strip()]
+        
+        print(f"📝 Creating {len(segments)} segments...")
+        
+        for i, segment in enumerate(segments):
+            if i % 5 == 0:
+                print(f"  → {i+1}/{len(segments)}")
+            
+            self.create_segment_frames(segment, article.get('image_url'))
+        
+        print("🎥 Rendering video...")
+        return self.create_video_from_frames(output_filename)

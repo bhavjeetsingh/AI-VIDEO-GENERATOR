@@ -54,9 +54,12 @@ class AIVideoGenerator:
             return None
         
         # Save script
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_filename = f"script_{timestamp}.json"
+        # Save script - use article title for consistent naming (no duplicates)
+        safe_title = "".join(c for c in article['title'][:40] if c.isalnum() or c in (' ', '-', '_'))
+        safe_title = safe_title.replace(' ', '_')
+        script_filename = f"script_{safe_title}.json"
         self.script_generator.save_script(script, script_filename)
+
         
         print(f"\nGenerated Script Preview:")
         print(f"  Hook: {script.get('hook', 'N/A')[:80]}...")
@@ -64,6 +67,7 @@ class AIVideoGenerator:
         
         # Step 3: Create video
         print(f"\n[3/4] Creating video...")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         video_filename = f"video_{timestamp}.mp4"
         
         try:

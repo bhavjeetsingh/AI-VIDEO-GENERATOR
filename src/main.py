@@ -1,6 +1,6 @@
 """
 AI Video Generator - Main Application
-Orchestrates the news-to-video pipeline
+Orchestrates the news-to-video pipeline with both Pillow and Gemini support
 """
 
 import sys
@@ -15,17 +15,43 @@ from script_generator import ScriptGenerator
 from video_creator import VideoCreator
 import config
 
+# Optional: Gemini video generation
+try:
+    from gemini_video_generator import GeminiVideoGenerator
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    print("⚠ Gemini not available. Install with: pip install google-generativeai")
+
 
 class AIVideoGenerator:
-    def __init__(self):
+    def __init__(self, use_gemini: bool = False):
         self.news_scraper = NewsScraper()
         self.script_generator = ScriptGenerator()
         self.video_creator = VideoCreator()
+        self.use_gemini = use_gemini and GEMINI_AVAILABLE
+        
+        if self.use_gemini:
+            try:
+                self.gemini_video = GeminiVideoGenerator()
+                print("✓ Gemini Video Generation enabled")
+            except Exception as e:
+                print(f"⚠ Gemini initialization failed: {e}")
+                self.gemini_video = None
+                self.use_gemini = False
     
-    def generate_video_from_article(self, article_index: int = 0, category: str = None):
+    def generate_video_from_article(self, article_index: int = 0, category: str = None, use_gemini: bool = None):
         """Generate a video from a specific news article"""
+        
+        # Allow override of gemini setting per call
+        use_gemini_now = use_gemini if use_gemini is not None else self.use_gemini
+        
         print("=" * 60)
         print("AI VIDEO GENERATOR - News to Video Pipeline")
+        if use_gemini_now:
+            print("[MODE: Gemini AI Video Generation]")
+        else:
+            print("[MODE: Pillow + MoviePy]")
         print("=" * 60)
         
         # Step 1: Fetch news article
@@ -53,17 +79,16 @@ class AIVideoGenerator:
             print("Error: Failed to generate script")
             return None
         
-        # Save script
         # Save script - use article title for consistent naming (no duplicates)
         safe_title = "".join(c for c in article['title'][:40] if c.isalnum() or c in (' ', '-', '_'))
         safe_title = safe_title.replace(' ', '_')
         script_filename = f"script_{safe_title}.json"
         self.script_generator.save_script(script, script_filename)
-
         
         print(f"\nGenerated Script Preview:")
         print(f"  Hook: {script.get('hook', 'N/A')[:80]}...")
         print(f"  Segments: {len(script.get('segments', []))}")
+        print(f"  Script saved: output/scripts/{script_filename}")
         
         # Step 3: Create video
         print(f"\n[3/4] Creating video...")
@@ -71,11 +96,23 @@ class AIVideoGenerator:
         video_filename = f"video_{timestamp}.mp4"
         
         try:
-            video_path = self.video_creator.create_video(
-                article, 
-                script, 
-                video_filename
-            )
+            if use_gemini_now and self.gemini_video:
+                print("🎬 Using Google Gemini for video generation...")
+                video_path = self.gemini_video.generate_video_from_script(
+                    script,
+                    output_path=os.path.join(config.OUTPUT_VIDEO_DIR, video_filename)
+                )
+            else:
+                print("🎬 Using Pillow + MoviePy for video generation...")
+                video_path = self.video_creator.create_video(
+                    article,
+                    script,
+                    video_filename
+                )
+            
+            if not video_path:
+                print("Error: Video generation failed")
+                return None
             
             # Step 4: Done
             print(f"\n[4/4] Video generation complete!")
@@ -93,9 +130,13 @@ class AIVideoGenerator:
             traceback.print_exc()
             return None
     
-    def generate_multiple_videos(self, count: int = 3, category: str = None):
+    def generate_multiple_videos(self, count: int = 3, category: str = None, use_gemini: bool = None):
         """Generate multiple videos from trending articles"""
-        print(f"\nGenerating {count} videos from trending news...\n")
+        use_gemini_now = use_gemini if use_gemini is not None else self.use_gemini
+        
+        print(f"\nGenerating {count} videos from trending news...")
+        if use_gemini_now:
+            print("⚠ Using Gemini - this may take longer due to API limits\n")
         
         videos = []
         for i in range(count):
@@ -103,7 +144,11 @@ class AIVideoGenerator:
             print(f"Processing Article {i+1}/{count}")
             print(f"{'#' * 60}")
             
-            video_path = self.generate_video_from_article(article_index=i, category=category)
+            video_path = self.generate_video_from_article(
+                article_index=i, 
+                category=category,
+                use_gemini=use_gemini_now
+            )
             
             if video_path:
                 videos.append(video_path)
@@ -123,15 +168,36 @@ class AIVideoGenerator:
         
         print(f"Found {len(articles)} trending articles:\n")
         print("=" * 80)
-        
         for i, article in enumerate(articles):
             print(f"\n[{i}] {article['title']}")
-            print(f"    Source: {article['source']}")
-            print(f"    URL: {article['url']}")
+            print(f"  Source: {article['source']}")
+            print(f"  URL: {article['url']}")
             if article['description']:
-                print(f"    Description: {article['description'][:100]}...")
-        
+                print(f"  Description: {article['description'][:100]}...")
         print("\n" + "=" * 80)
+    
+    def print_modes(self):
+        """Print available video generation modes"""
+        print("\n" + "=" * 60)
+        print("AVAILABLE VIDEO GENERATION MODES:")
+        print("=" * 60)
+        print("\n✓ Pillow + MoviePy Mode (DEFAULT)")
+        print("  - Fast frame generation")
+        print("  - Professional text overlays")
+        print("  - No external API required")
+        print("  - Best for: Quick generation, batch processing")
+        
+        if GEMINI_AVAILABLE:
+            print("\n✓ Google Gemini Mode (PREMIUM)")
+            print("  - AI-generated videos")
+            print("  - Photorealistic quality")
+            print("  - Requires Google API key")
+            print("  - Best for: High-quality, realistic videos")
+        else:
+            print("\n✗ Google Gemini Mode (NOT INSTALLED)")
+            print("  Install: pip install google-generativeai")
+        
+        print("\n" + "=" * 60)
 
 
 def print_usage():
@@ -139,56 +205,75 @@ def print_usage():
     print("\nAI Video Generator - Usage")
     print("=" * 60)
     print("\nOptions:")
-    print("  1. Generate a single video from the first trending article")
-    print("  2. Generate multiple videos (specify count)")
-    print("  3. List available trending articles")
-    print("  4. Generate video from specific article index")
-    print("  5. Exit")
+    print("  1. Generate a single video (Pillow mode)")
+    print("  2. Generate a single video (Gemini mode)")
+    print("  3. Generate multiple videos (Pillow mode)")
+    print("  4. Generate multiple videos (Gemini mode)")
+    print("  5. List available trending articles")
+    print("  6. View available modes")
+    print("  7. Exit")
     print("\n" + "=" * 60)
 
 
 def main():
     """Main application entry point"""
+    
     # Check if running from correct directory
     if not os.path.exists('config.py'):
         print("Error: Please run this script from the ai-video-generator directory")
         print("Current directory:", os.getcwd())
         return
     
-    generator = AIVideoGenerator()
+    # Initialize without Gemini by default
+    generator = AIVideoGenerator(use_gemini=False)
     
     # Interactive mode if no arguments
     if len(sys.argv) == 1:
         while True:
             print_usage()
-            choice = input("\nEnter your choice (1-5): ").strip()
+            choice = input("\nEnter your choice (1-7): ").strip()
             
             if choice == '1':
-                generator.generate_video_from_article(article_index=0)
+                generator.generate_video_from_article(article_index=0, use_gemini=False)
                 input("\nPress Enter to continue...")
                 
             elif choice == '2':
+                if GEMINI_AVAILABLE:
+                    generator.generate_video_from_article(article_index=0, use_gemini=True)
+                else:
+                    print("Gemini not available. Install with: pip install google-generativeai")
+                input("\nPress Enter to continue...")
+                
+            elif choice == '3':
                 try:
                     count = int(input("How many videos to generate? (1-5): ").strip())
                     count = min(max(1, count), 5)
-                    generator.generate_multiple_videos(count=count)
-                    input("\nPress Enter to continue...")
+                    generator.generate_multiple_videos(count=count, use_gemini=False)
                 except ValueError:
                     print("Invalid input. Please enter a number.")
-                    
-            elif choice == '3':
-                generator.list_available_articles()
                 input("\nPress Enter to continue...")
                 
             elif choice == '4':
-                try:
-                    index = int(input("Enter article index: ").strip())
-                    generator.generate_video_from_article(article_index=index)
-                    input("\nPress Enter to continue...")
-                except ValueError:
-                    print("Invalid input. Please enter a number.")
-                    
+                if GEMINI_AVAILABLE:
+                    try:
+                        count = int(input("How many videos to generate? (1-3): ").strip())
+                        count = min(max(1, count), 3)
+                        generator.generate_multiple_videos(count=count, use_gemini=True)
+                    except ValueError:
+                        print("Invalid input. Please enter a number.")
+                else:
+                    print("Gemini not available. Install with: pip install google-generativeai")
+                input("\nPress Enter to continue...")
+                
             elif choice == '5':
+                generator.list_available_articles()
+                input("\nPress Enter to continue...")
+                
+            elif choice == '6':
+                generator.print_modes()
+                input("\nPress Enter to continue...")
+                
+            elif choice == '7':
                 print("\nGoodbye!")
                 break
                 
@@ -201,12 +286,22 @@ def main():
             generator.list_available_articles()
         elif sys.argv[1] == '--generate':
             index = int(sys.argv[2]) if len(sys.argv) > 2 else 0
-            generator.generate_video_from_article(article_index=index)
+            use_gemini = '--gemini' in sys.argv
+            generator.generate_video_from_article(article_index=index, use_gemini=use_gemini)
         elif sys.argv[1] == '--batch':
             count = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-            generator.generate_multiple_videos(count=count)
+            use_gemini = '--gemini' in sys.argv
+            generator.generate_multiple_videos(count=count, use_gemini=use_gemini)
+        elif sys.argv[1] == '--modes':
+            generator.print_modes()
         else:
-            print("Unknown command. Use --list, --generate [index], or --batch [count]")
+            print("Commands:")
+            print("  --list                          List available articles")
+            print("  --generate [index]              Generate video from article")
+            print("  --generate [index] --gemini     Generate with Gemini")
+            print("  --batch [count]                 Generate multiple videos")
+            print("  --batch [count] --gemini        Generate multiple with Gemini")
+            print("  --modes                         Show available modes")
 
 
 if __name__ == "__main__":

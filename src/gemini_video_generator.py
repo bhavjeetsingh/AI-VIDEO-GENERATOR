@@ -2,6 +2,7 @@
 Gemini Video Generation Module
 Uses Google's Gemini 2.0 API to generate videos from prompts
 """
+
 import google.generativeai as genai
 import os
 from typing import Optional, List

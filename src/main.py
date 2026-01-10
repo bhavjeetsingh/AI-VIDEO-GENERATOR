@@ -23,7 +23,7 @@ from script_generator import ScriptGenerator
 from video_creator import VideoCreator
 import config
 
-
+# ai video genetor main class
 class AIVideoGenerator:
     def __init__(self, use_gemini: bool = False):
         self.news_scraper = NewsScraper()
